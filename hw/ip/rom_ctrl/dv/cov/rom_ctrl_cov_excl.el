@@ -112,3 +112,22 @@ Condition 34 "201396280" "(d_valid && d_error) 1 -1" (1 "01")
 // the request will not already have been popped from the request fifo, so reqfifo_rvalid must be
 // true.
 Condition 43 "721931741" "(rvalid_i & reqfifo_rvalid) 1 -1" (2 "10")
+
+// It is impossible to see !tl_i_int.a_valid & !error_internal. When a_valid is false, it is seen
+// in u_err inside tlul_adapter_sram.sv. This will make a_config_allowed inside u_err false as it
+// depends on addr_sz_chk, mask_chk and fulldata_chk. All of them are false if a_valid is false.
+// This means that the first term inside err_o definition in u_err is false which raised err_o.
+// Next, err_o become visible to error_det as tlul_error inside tlul_adapter_sram and it will
+// be true if tlul_error is true. error_det will then be seen as error_i to u_sram_byte inside
+// tlul_adapter_sram.
+// Since EnableIntg parameter is 0 for rom_ctrl, error_i comes out as error_o from u_sram_byte.
+// Then error_o would be seen as error_internal to tlul_adapter_sram and the conditional statement
+// is not able to cover 00 case for this reason.
+Condition 37 "2164803938" "(tl_i_int.a_valid & reqfifo_wready & ((~error_internal))) 1 -1" (1 "011")
+
+// It is impossible to get sram_ack & we_o. if sram_ack is true, then we have (req_o & gnt_i) = 1.
+// For req_o to become true requires error_internal as false. we_o become true when there is an
+// a_valid and a_opcode as Put. But when a_opcode is a Put, wr_vld_error in the adapter becomes
+// true as ErrOnWrite is true for the adapter in case of rom_ctrl. Which means that error_internal
+// is true and req_o is false, which leads to sram_ack being false.
+Condition 43 "2041272341" "(sram_ack & ((~we_o))) 1 -1" (2 "10")
