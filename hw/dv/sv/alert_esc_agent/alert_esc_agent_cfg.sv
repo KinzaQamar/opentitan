@@ -36,6 +36,9 @@ class alert_esc_agent_cfg extends dv_base_agent_cfg;
   // Monitor will set this value to 1 when the agent is under ping handshake phase 2.
   bit under_ping_handshake_ph_2 = 0;
 
+  // Scoreboard will set this value to 1 if the alert happened is fatal
+  bit alert_fatal = 0;
+
   // dut clk frequency, used to generate alert async_clk frequency
   int clk_freq_mhz;
 

@@ -368,7 +368,10 @@ class cip_base_scoreboard #(type RAL_T = dv_base_reg_block,
                       "alert %0s is expected to trigger, fatal=%0d, delay %0d", alert_name,
                        exp_alert.is_fatal, exp_alert.max_delay), UVM_MEDIUM)
             expected_alert[alert_name] = '{1, exp_alert.is_fatal, exp_alert.max_delay};
+            cfg.m_alert_agent_cfgs[alert_name].alert_fatal = exp_alert.is_fatal;
           end
+          @(cfg.m_alert_agent_cfgs[alert_name].vif.monitor_cb);
+          cfg.m_alert_agent_cfgs[alert_name].alert_fatal = 0;
         end
       end
       `DV_CHECK_NE(num_alerts, 0, "Expected some alerts received")
@@ -672,6 +675,7 @@ class cip_base_scoreboard #(type RAL_T = dv_base_reg_block,
       alert_fifos[cfg.list_of_alerts[i]].flush();
       expected_alert[cfg.list_of_alerts[i]] = '0;
       under_alert_handshake[cfg.list_of_alerts[i]] = 0;
+      cfg.m_alert_agent_cfgs[cfg.list_of_alerts[i]].alert_fatal = 0;
     end
   endfunction
 
