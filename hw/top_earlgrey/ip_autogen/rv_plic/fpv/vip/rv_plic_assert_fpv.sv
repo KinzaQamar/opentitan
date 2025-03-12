@@ -104,4 +104,12 @@ module rv_plic_assert_fpv #(parameter int NumSrc = 1,
   // but smaller than the threshold
   `ASSERT(IdChangeWithIrq_A, !$stable(irq_id_o[tgt_sel]) && irq_id_o[tgt_sel] != 0 |->
           irq_o[tgt_sel] || ((irq_id_o[tgt_sel]) == $past(i_high_prio) && !$past(irq)))
+
+  for (genvar i = 0; i < NumAlerts; i++) begin : gen_cov_alert_clr
+    sequence alert_clear;
+      $rose(alert_tx_o[i].alert_p) ##[+] ({alert_tx_o[i].alert_p, alert_tx_o[i].alert_n} == 2'b01)[*10];
+    endsequence
+
+    `COVER(AlertClear_c, alert_clear, clk_i, !rst_ni)
+  end
 endmodule : rv_plic_assert_fpv

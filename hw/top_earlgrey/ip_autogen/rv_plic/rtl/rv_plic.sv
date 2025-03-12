@@ -423,6 +423,7 @@ module rv_plic import rv_plic_reg_pkg::*; #(
   `ASSERT_KNOWN(TlAReadyKnownO_A, tl_o.a_ready)
   `ASSERT_KNOWN(IrqKnownO_A, irq_o)
   `ASSERT_KNOWN(MsipKnownO_A, msip_o)
+  `ASSERT(FatalAlertNeverLow, ##1 !$fell(alerts[0]))
   for (genvar k = 0; k < NumTarget; k++) begin : gen_irq_id_known
     `ASSERT_KNOWN(IrqIdKnownO_A, irq_id_o[k])
   end
