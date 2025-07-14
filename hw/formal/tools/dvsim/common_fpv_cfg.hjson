@@ -4,6 +4,7 @@
 {
   sub_flow: fpv
   import_cfgs: ["{proj_root}/hw/formal/tools/dvsim/common_formal_cfg.hjson"]
+  synth_opt: ["{proj_root}/hw/formal/tools/jaspergold/synthesis_optimized.tcl"]
   stopats: []
   task: ""
   after_load: []
@@ -13,5 +14,6 @@
     {STOPATS:    "'{stopats}'"},
     {TASK:       '{task}'},
     {AFTER_LOAD: '{after_load}'},
+    {SYNTH_OPT: '{synth_opt}'},
   ]
 }
