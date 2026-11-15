@@ -15,7 +15,7 @@ filesets:
       - lowrisc:dv:keymgr_dpe_test
       - lowrisc:dv:keymgr_dpe_sva
     files:
-      - tb.sv
+      - tb/tb.sv
       - cov/keymgr_dpe_cov_bind.sv
     file_type: systemVerilogSource
 
