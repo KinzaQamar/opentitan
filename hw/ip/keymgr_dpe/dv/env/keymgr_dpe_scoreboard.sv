@@ -1140,7 +1140,6 @@ class keymgr_dpe_scoreboard extends cip_base_scoreboard #(
   // TODO(#30758): Remove this backdoor load
   virtual function void backdoor_load_uds(int slot);
     `uvm_info(`gfn, "Load UDS with randomness via backdoor", UVM_MEDIUM)
-    current_internal_key[slot].key = cfg.keymgr_dpe_ctrl_vif.get_key_of_slot(slot);
   endfunction
 
   virtual function bit [TL_DW-1:0] get_current_max_version(

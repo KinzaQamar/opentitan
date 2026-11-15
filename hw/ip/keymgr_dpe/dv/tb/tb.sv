@@ -92,8 +92,6 @@ module tb;
     .tl_o                 (tl_if.d2h)
   );
 
-  bind dut.u_ctrl keymgr_dpe_ctrl_if u_if (.clk_i, .rst_ni);
-
   // Connect keymgr_dpe and KMAC interface.
   assign keymgr_dpe_if.kmac_data_req = kmac_req;
   assign keymgr_dpe_if.kmac_data_rsp = kmac_rsp;
@@ -133,10 +131,6 @@ module tb;
                                                  "*.env",
                                                  "rst_shadowed_vif",
                                                  rst_shadowed_if);
-    uvm_config_db#(virtual keymgr_dpe_ctrl_if)::set(null,
-                                                    "*.env",
-                                                    "keymgr_dpe_ctrl_vif",
-                                                    dut.u_ctrl.u_if);
     uvm_config_db#(virtual keymgr_dpe_if)::set(null, "*.env", "keymgr_dpe_vif", keymgr_dpe_if);
     uvm_config_db#(virtual kmac_app_if)::set(null, "*env.m_kmac_agent", "vif", kmac_if);
     uvm_config_db#(virtual kmac_app_if)::set(null, "*env.m_otbn_agent", "vif", otbn_if);
