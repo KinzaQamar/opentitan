@@ -15,9 +15,6 @@ class keymgr_dpe_env_cfg extends cip_base_env_cfg #(.RAL_T(keymgr_dpe_reg_block)
 
   `uvm_object_new
 
-  // Interface that is bound into the keymgr_dpe_ctrl instance
-  virtual keymgr_dpe_ctrl_if keymgr_dpe_ctrl_vif;
-
   virtual function void initialize(bit inherit_ral_models = 1'b0);
     list_of_alerts = keymgr_dpe_env_pkg::LIST_OF_ALERTS;
     tl_intg_alert_name = "fatal_fault_err";
