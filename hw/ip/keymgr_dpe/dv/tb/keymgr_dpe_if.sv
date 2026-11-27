@@ -1,857 +1,102 @@
 // Copyright lowRISC contributors (OpenTitan project).
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
-//
-// interface for input data from LC or OTP
-interface keymgr_dpe_if(input clk, input rst_n);
 
-  import uvm_pkg::*;
-  import keymgr_dpe_env_pkg::*;
+// This interface connects the UVM environment to the keymgr_dpe DUT.
+interface keymgr_dpe_if #(parameter int unsigned NUM_ROM_DIGESTS = 1)
+(
+  input clk_i,
+  input rst_ni
+);
 
-  // Represents the keymgr_dpe sideload state for each sideload interface.
+  import lc_ctrl_pkg::lc_tx_t;
+  import lc_ctrl_pkg::lc_keymgr_div_t;
+  import rom_ctrl_pkg::keymgr_data_t;
+  import keymgr_dpe_pkg::*;
+
+  wire hw_key_req_t aes_key;
+
+  // kmac_key_o contains the parent key when keymgr_dpe sends a request to KMAC during Advance or
+  // Generate HW / SW Output operations. Otherwise it contains the sideload key.
+  wire hw_key_req_t      kmac_key;
+  wire wide_hw_key_req_t hmac_key;
+
+  // otbn_key_o contains the parent key when keymgr_dpe sends a request to OTBN during Advance or
+  // Generate HW / SW Output operations. Otherwise it contains the sideload key.
+  wire wide_hw_key_req_t otbn_key;
+
+  // LC interface to enable / disable keymgr_dpe.
+  wire lc_tx_t         lc_keymgr_en;
+  wire lc_keymgr_div_t lc_keymgr_div;
+
+  // Root keys.
+  wire keymgr_dpe_creator_root_key_t creator_root_key;
+  wire keymgr_dpe_creator_root_key_t secondary_root_key;
+
+  // Utilized as HW bindings in the KDF message argument (child_key = KDF(parent_key, message)).
+  wire keymgr_dpe_creator_seed_t           creator_seed;
+  wire keymgr_dpe_owner_seed_t             owner_seed;
+  wire keymgr_dpe_device_id_t              device_id;
+  wire keymgr_dpe_field_entropy_t          field_entropy;
+  wire keymgr_data_t [NUM_ROM_DIGESTS-1:0] rom_digest;
+
+  // The driver drives these *_internal signals in a block-level simulation. They are needed because
+  // wires cannot be driven procedurally. The assigns below pass them on to the wires when the
+  // interface is active, and release the wires (drive 'z) when it is passive.
+  lc_tx_t         lc_keymgr_en_internal;
+  lc_keymgr_div_t lc_keymgr_div_internal;
+
+  keymgr_dpe_creator_root_key_t creator_root_key_internal;
+  keymgr_dpe_creator_root_key_t secondary_root_key_internal;
+
+  keymgr_dpe_creator_seed_t           creator_seed_internal;
+  keymgr_dpe_owner_seed_t             owner_seed_internal;
+  keymgr_dpe_device_id_t              device_id_internal;
+  keymgr_dpe_field_entropy_t          field_entropy_internal;
+  keymgr_data_t [NUM_ROM_DIGESTS-1:0] rom_digest_internal;
+
+  // To use this interface in both top-level and block-level simulations, this is_active bit is
+  // needed. The block-level environment assigns this bit. The top-level environment can leave it
+  // unassigned, so the interface stays passive.
+  bit is_active;
+
+  assign lc_keymgr_en       = (is_active)? lc_keymgr_en_internal       :
+                                           lc_tx_t'('z);
+  assign lc_keymgr_div      = (is_active)? lc_keymgr_div_internal      :
+                                           lc_keymgr_div_t'('z);
+  assign creator_root_key   = (is_active)? creator_root_key_internal   :
+                                           keymgr_dpe_creator_root_key_t'('z);
+  assign secondary_root_key = (is_active)? secondary_root_key_internal :
+                                           keymgr_dpe_creator_root_key_t'('z);
+  assign creator_seed       = (is_active)? creator_seed_internal       :
+                                           keymgr_dpe_creator_seed_t'('z);
+  assign owner_seed         = (is_active)? owner_seed_internal         :
+                                           keymgr_dpe_owner_seed_t'('z);
+  assign device_id          = (is_active)? device_id_internal          :
+                                           keymgr_dpe_device_id_t'('z);
+  assign field_entropy      = (is_active)? field_entropy_internal      :
+                                           keymgr_dpe_field_entropy_t'('z);
+  assign rom_digest         = (is_active)? rom_digest_internal         :
+                                           keymgr_data_t'('z);
+
+  // Clocking block for monitor.
   //
-  // The initial status is SideLoadNotAvail. After the sideload key is generated, it becomes
-  // SideLoadAvail.
-  // Status can't be directly changed from SideLoadClear to SideLoadAvail.
-  // When status is SideLoadClear due to SIDELOAD_CLEAR programmed, need to write CSR to 0 to reset
-  // it so that status is changed to SideLoadNotAvail, then we may set it to SideLoadAvail again
-  lc_ctrl_pkg::lc_tx_t                                  keymgr_dpe_en;
-  lc_ctrl_pkg::lc_keymgr_div_t                          keymgr_dpe_div;
-  keymgr_dpe_pkg::keymgr_dpe_device_id_t                otp_device_id;
-  keymgr_dpe_pkg::keymgr_dpe_creator_root_key_t         creator_root_key;
-  keymgr_dpe_pkg::keymgr_dpe_creator_root_key_t         secondary_root_key;
-  keymgr_dpe_pkg::keymgr_dpe_creator_seed_t             creator_seed;
-  keymgr_dpe_pkg::keymgr_dpe_owner_seed_t               owner_seed;
-  keymgr_dpe_pkg::keymgr_dpe_field_entropy_t            field_entropy;
-  rom_ctrl_pkg::keymgr_data_t[DvNumRomDigestInputs-1:0] rom_digests;
+  // The inputs to keymgr_dpe are quasi-static, so there is no need to declare a separate
+  // (driving) clocking block for them.
+  clocking mon_cb @(posedge clk_i);
+    input aes_key;
+    input kmac_key;
+    input hmac_key;
+    input otbn_key;
+    input lc_keymgr_en;
+    input lc_keymgr_div;
+    input creator_root_key;
+    input secondary_root_key;
+    input creator_seed;
+    input owner_seed;
+    input device_id;
+    input field_entropy;
+    input rom_digest;
+  endclocking
 
-  keymgr_dpe_pkg::hw_key_req_t kmac_key;
-  keymgr_dpe_pkg::hw_key_req_t aes_key;
-  keymgr_dpe_pkg::wide_hw_key_req_t otbn_key;
-  keymgr_dpe_pkg::wide_hw_key_req_t hmac_key;
-
-  keymgr_dpe_pkg::hw_key_req_t kmac_key_exp;
-  keymgr_dpe_pkg::hw_key_req_t aes_key_exp;
-  keymgr_dpe_pkg::wide_hw_key_req_t hmac_key_exp;
-  keymgr_dpe_pkg::wide_hw_key_req_t otbn_key_exp;
-
-  // connect KDF interface for assertion check
-  wire kmac_pkg::app_req_t kmac_data_req;
-  wire kmac_pkg::app_rsp_t kmac_data_rsp;
-
-  // connect EDN for assertion check
-  wire edn_clk, edn_rst_n, edn_req, edn_ack;
-
-  // connect to PRNG to track PRNG updates for EDN assertion
-  wire lfsr_en;
-
-  // keymgr_dpe_en is async, create a sync one for use in scb
-  lc_ctrl_pkg::lc_tx_t keymgr_dpe_en_sync1, keymgr_dpe_en_sync2;
-
-  // indicate if check the key is same as expected or shouldn't match to any meaningful key
-  // when a good KDF is ongoing or kmac sideload key is available, this flag is set to 1
-  bit is_kmac_key_good;
-
-  // KMAC data is checked in scb, but when keymgr_dpe is in
-  // disabled/invalid state or LC is off, KMAC
-  // data will be driven with constantly changed entropy data, which violate
-  // H_DataStableWhenValidAndNotReady_A. Use this flag to disable it
-  bit is_kmac_data_good;
-
-  // sideload status
-  keymgr_dpe_sideload_status_e aes_sideload_status;
-  keymgr_dpe_sideload_status_e otbn_sideload_status;
-  keymgr_dpe_sideload_status_e hmac_sideload_status;
-
-  // When kmac sideload key is generated, `kmac_key` becomes valid with the generated digest data.
-  // If SW requests keymgr_dpe to do another operation, kmac_key will be updated to the internal key
-  // to perform a KMAC KDF operation.
-  // Once the operation is done, `kmac_key` is expected to switch automatically to the previous KMAC
-  // sideload key.
-  keymgr_dpe_sideload_status_e kmac_sideload_status;
-  keymgr_dpe_env_pkg::hw_key_shares_t kmac_sideload_key_shares;
-
-  // use `string` here is to combine both internal key and sideload keys, so it could be "internal"
-  // or any name at keymgr_dpe_key_dest_e
-  keymgr_dpe_env_pkg::kmac_digests_t keys_a_array[
-    keymgr_dpe_pkg::keymgr_dpe_exposed_working_state_e][string];
-
-  // set this flag when design enters init state, edn req will start periodically
-  bit start_edn_req;
-  // keymgr_dpe will request edn twice for 64 bit data each time,
-  // use this to indicate if it's first or
-  // second req. 0: wait for 1st req, 1: for 2nd
-  bit edn_req_cnt;
-  bit edn_wait_cnt_incr;
-  bit edn_wait_cnt_clr;
-  int edn_wait_cnt;
-  int edn_interval;
-  // synchronize req/ack from async domain
-  bit edn_req_sync;
-  bit edn_req_ack_sync;
-  bit edn_req_ack_sync_done;
-  bit edn_req_ack_sync_done_qq;
-
-  // If we need to wait for internal signal to be certain value, we may not be able to get that
-  // when the sim is close to end. Define a cnt and MaxWaitCycle to avoid sim hang
-  int cnt_to_wait_for_internal_value;
-  localparam int MaxWaitCycle = 100_000;
-
-  // Disable the check when we force internal design as it's hard to predict design behavior when
-  // internal FSM is changed or internal error is triggered
-  bit en_chk = 1;
-
-  string msg_id = "keymgr_dpe_if";
-
-  int edn_tolerance_upd = 20;
-
-  // assigned from the keymgr_dpe.keymgr_dpe_ctrl.key_slots_q signal, which should hold the
-  // current value of the keyslots in the dut.
-  keymgr_dpe_pkg::keymgr_dpe_slot_t [DvNumInstHwSlot-1:0] internal_key_slots;
-
-  task automatic init(bit rand_otp_key, bit invalid_otp_key, bit rand_secondary_root_key,
-                      bit invalid_secondary_root_key, bit rand_field_entropy,
-                      bit unprovisioned_field_entropy);
-    // Keymgr_dpe only latches OTP key once, so this scb does not support change OTP key on the
-    // fly. Will write a direct sequence to cover otp key change on the fly.
-    keymgr_dpe_pkg::keymgr_dpe_creator_root_key_t local_creator_root_key;
-    keymgr_dpe_pkg::keymgr_dpe_creator_root_key_t local_secondary_root_key;
-    keymgr_dpe_pkg::keymgr_dpe_field_entropy_t    local_field_entropy;
-
-    // async delay as these signals are from different clock domain
-    #($urandom_range(1000, 0) * 1ns);
-    keymgr_dpe_en = lc_ctrl_pkg::On;
-    keymgr_dpe_div = 64'h5CFBD765CE33F34E;
-    otp_device_id = 'hF0F0;
-    for (int i = 0; i < DvNumRomDigestInputs; ++i) begin
-      rom_digests[i].data = 256'hA20A046CF42E6EAC560A3F82BFA76285B5C1D4AEA7C915E49A32D1C89BE0F507;
-      rom_digests[i].valid = '1;
-    end
-    // Load the default value for all seed's
-    local_creator_root_key = keymgr_dpe_pkg::KEYMGR_DPE_CREATOR_ROOT_KEY_DEFAULT;
-    local_secondary_root_key = keymgr_dpe_pkg::KEYMGR_DPE_SECONDARY_ROOT_KEY_DEFAULT;
-    local_field_entropy = keymgr_dpe_pkg::KEYMGR_DPE_FIELD_ENTROPY_DEFAULT;
-    creator_seed = keymgr_dpe_pkg::KEYMGR_DPE_CREATOR_SEED_DEFAULT;
-    owner_seed = keymgr_dpe_pkg::KEYMGR_DPE_OWNER_SEED_DEFAULT;
-    // If requested randomize the creator_root_key
-    if (rand_otp_key) begin
-      `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(local_creator_root_key,
-                                         local_creator_root_key.share0_valid == 1;
-                                         local_creator_root_key.share1_valid == 1;
-                                         !(local_creator_root_key.share0 inside {0, '1});
-                                         !(local_creator_root_key.share1 inside {0, '1});
-                                         , , msg_id)
-    end
-    if (invalid_otp_key) begin
-      local_creator_root_key.share0_valid = 0;
-      local_creator_root_key.share1_valid = 0;
-    end
-    creator_root_key = local_creator_root_key;
-
-    // If requested randomize the secondary_root_key
-    local_secondary_root_key.share0_valid = 1'b1;
-    local_secondary_root_key.share1_valid = 1'b1;
-    if (rand_secondary_root_key) begin
-      `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(local_secondary_root_key,
-                                         local_secondary_root_key.share0_valid == 1;
-                                         local_secondary_root_key.share1_valid == 1;
-                                         !(local_secondary_root_key.share0 inside {0, '1});
-                                         !(local_secondary_root_key.share1 inside {0, '1});
-                                         , , msg_id)
-    end
-    if (invalid_secondary_root_key) begin
-      local_secondary_root_key.share0_valid = 0;
-      local_secondary_root_key.share1_valid = 0;
-    end
-    secondary_root_key = local_secondary_root_key;
-
-    // If requested randomize the field_entropy.
-    if (rand_field_entropy) begin
-      `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(local_field_entropy,
-                                         local_field_entropy.secret_valid == 1;
-                                         !(local_field_entropy.secret inside {0, '1});
-                                         , , msg_id)
-    end
-    if (unprovisioned_field_entropy) begin
-      local_field_entropy.secret_valid = 0;
-    end
-    field_entropy = local_field_entropy;
-  endtask
-
-  // reset local exp variables when reset is issued
-  function automatic void reset();
-    keymgr_dpe_en = lc_ctrl_pkg::lc_tx_t'($urandom);
-    kmac_key_exp = '0;
-    aes_key_exp  = '0;
-    otbn_key_exp = '0;
-    hmac_key_exp = '0;
-    is_kmac_key_good = 0;
-    is_kmac_data_good = 0;
-    kmac_sideload_status = SideLoadNotAvail;
-    aes_sideload_status = SideLoadNotAvail;
-    otbn_sideload_status = SideLoadNotAvail;
-    hmac_sideload_status = SideLoadNotAvail;
-
-    // edn related
-    edn_interval  = 'h100;
-    start_edn_req = 0;
-  endfunction
-
-  // Set the keymgr_dpe_div signal to a random value.
-  // If is_invalid is true, this value is constrained
-  // to be all-zero or all-one.
-  function automatic void set_random_keymgr_dpe_div(bit is_invalid);
-    `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(keymgr_dpe_div, !(keymgr_dpe_div inside {0, '1});, , msg_id)
-    if (is_invalid) begin
-      keymgr_dpe_div = ($urandom & 1) ? '0 : '1;
-    end
-  endfunction
-
-  // Set the otp_device_id signal to a random value. If is_invalid is true, this value is
-  // constrained to be all-zero or all-one.
-  function automatic void set_random_otp_device_id(bit is_invalid);
-    `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(otp_device_id, !(otp_device_id inside {0, '1});, , msg_id)
-    if (is_invalid) begin
-      otp_device_id = ($urandom & 1) ? '0 : '1;
-    end
-  endfunction
-
-  // Set the rom digest signal from rom_ctrl i to a random value. If bad_data is true, the digest
-  // data will be '0 or '1. If bad_valid is true, the valid signal will be 0.
-  function automatic void set_random_rom_digest(int i, bit bad_data, bit bad_valid);
-    bit [255:0] data;
-    `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(data, !(data inside {0, '1});, , msg_id)
-    rom_digests[i].data = data;
-    if (bad_data) begin
-      rom_digests[i].data  = ($urandom & 1) ? '0 : '1;
-    end
-    rom_digests[i].valid = !bad_valid;
-  endfunction
-
-  // randomize lc and input data
-  task automatic drive_random_hw_input_data(int num_invalid_input = 0);
-    // Firstly, decide which signals should be driven with invalid data. Store the choices we make
-    // as a set of flags / counters.
-    bit bad_keymgr_dpe_div = 1'b0;
-    bit bad_otp_device_id = 1'b0;
-    bit [DvNumRomDigestInputs-1:0] bad_rom_data = '0, bad_rom_valid = '0;
-
-    repeat (num_invalid_input) begin
-      randcase
-        1: bad_keymgr_dpe_div = 1'b1;
-        1: bad_otp_device_id = 1'b1;
-        1: bad_rom_data[$urandom % DvNumRomDigestInputs] = 1'b1;
-        1: bad_rom_valid[$urandom % DvNumRomDigestInputs] = 1'b1;
-      endcase
-    end
-
-    // Drive each signal, starting each signal's drive at a randomised time, not synchronised with
-    // any clock. This models the fact that the signals are from different clock domains.
-    fork
-      // keymgr_dpe_div
-      begin
-        #($urandom_range(1000, 0) * 1ns);
-        set_random_keymgr_dpe_div(bad_keymgr_dpe_div);
-      end
-
-      // otp_device_id
-      begin
-        #($urandom_range(1000, 0) * 1ns);
-        set_random_otp_device_id(bad_otp_device_id);
-      end
-
-      // rom_digests
-      begin
-        for (int i = 0; i < DvNumRomDigestInputs; i++)
-          fork
-            automatic int local_i = i;
-            #($urandom_range(1000, 0) * 1ns);
-            set_random_rom_digest(local_i, bad_rom_data[local_i], bad_rom_valid[local_i]);
-          join_none
-        wait fork;
-      end
-    join
-
-    // Once the join above has completed, every signal has been driven. Wait a few more cycles for
-    // the design to sync up these inputs before we start operations
-    repeat ($urandom_range(3, 100)) @(posedge clk);
-  endtask
-
-  function automatic void compare_internal_key_slot(
-    keymgr_dpe_pkg::keymgr_dpe_slot_t dst_key_slot,
-    keymgr_dpe_pkg::keymgr_dpe_slot_t src_key_slot,
-    dv_keymgr_dpe_slot_idx_e dst_slot_index,
-    dv_keymgr_dpe_slot_idx_e src_slot_index,
-    bit check_parent_retained
-  );
-    `DV_CHECK_EQ(dst_key_slot, internal_key_slots[dst_slot_index],
-            $sformatf("exp_dst_key_slot[%0d] vs internal_key_slot[%0d]",
-            dst_slot_index, dst_slot_index), ,
-            msg_id)
-    // if the parent is supposed to be retained then check that the
-    // src slot contains the expected key still
-    if(check_parent_retained)
-      `DV_CHECK_EQ(src_key_slot, internal_key_slots[src_slot_index],
-              $sformatf("exp_src_key_slot[%0d] vs internal_key_slot[%0d]",
-              src_slot_index, src_slot_index), ,
-              msg_id)
-  endfunction
-
-  // Update kmac key for comparison during KDF. The internal key is wider than the KMAC key,
-  // so only the lower `HwKeyWidth` bits are forwarded to KMAC.
-  function automatic void update_kdf_key(keymgr_dpe_env_pkg::internal_key_shares_t key_shares,
-                                         keymgr_dpe_pkg::keymgr_dpe_exposed_working_state_e state,
-                                         bit good_key, bit good_data);
-    keymgr_dpe_env_pkg::hw_key_shares_t trunc_key_shares = {
-        key_shares[1][keymgr_dpe_pkg::HwKeyWidth-1:0],
-        key_shares[0][keymgr_dpe_pkg::HwKeyWidth-1:0]
-      };
-
-    kmac_key_exp <= '{1'b1, trunc_key_shares};
-    is_kmac_key_good <= good_key;
-    is_kmac_data_good <= good_data;
-  endfunction
-
-  // store internal key once it's available and use to compare if future OP is invalid
-  function automatic void store_internal_key(
-      keymgr_dpe_env_pkg::internal_key_shares_t key_shares,
-      keymgr_dpe_pkg::keymgr_dpe_exposed_working_state_e state
-    );
-    // Zero extend each share to the digest width, `keys_a_array` also holds the sideload keys.
-    keymgr_dpe_env_pkg::kmac_digests_t ext_key_shares = {
-        kmac_pkg::AppDigestW'(key_shares[1]),
-        kmac_pkg::AppDigestW'(key_shares[0])
-      };
-
-    keys_a_array[state]["Internal"] = ext_key_shares;
-  endfunction
-
-  // update sideload key for comparison
-  // if it's good key, store it to compare for future invalid OP
-  function automatic void update_sideload_key(
-      keymgr_dpe_env_pkg::kmac_digests_t key_shares,
-      keymgr_dpe_pkg::keymgr_dpe_exposed_working_state_e state,
-      keymgr_dpe_pkg::keymgr_dpe_key_dest_e dest = keymgr_dpe_pkg::Kmac
-  );
-    // KMAC and AES consume the lower `HwKeyWidth` bits of the digest
-    keymgr_dpe_env_pkg::hw_key_shares_t hw_key_shares = {
-        key_shares[1][keymgr_dpe_pkg::HwKeyWidth-1:0],
-        key_shares[0][keymgr_dpe_pkg::HwKeyWidth-1:0]
-      };
-    // OTBN and HMAC consume the lower `WideHwKeyWidth` bits of the digest
-    keymgr_dpe_env_pkg::wide_hw_key_shares_t wide_key_shares = {
-        key_shares[1][keymgr_dpe_pkg::WideHwKeyWidth-1:0],
-        key_shares[0][keymgr_dpe_pkg::WideHwKeyWidth-1:0]
-      };
-    case (dest)
-      keymgr_dpe_pkg::Kmac: begin
-        if (kmac_sideload_status != SideLoadClear) begin
-          kmac_sideload_status     <= SideLoadAvail;
-          kmac_key_exp             <= '{1'b1, hw_key_shares};
-          is_kmac_key_good         <= 1;
-          kmac_sideload_key_shares <= hw_key_shares;
-        end
-      end
-      keymgr_dpe_pkg::Aes: begin
-        if (aes_sideload_status != SideLoadClear) begin
-          aes_key_exp         <= '{1'b1, hw_key_shares};
-          aes_sideload_status <= SideLoadAvail;
-        end
-      end
-      keymgr_dpe_pkg::Otbn: begin
-        if (otbn_sideload_status != SideLoadClear) begin
-          otbn_key_exp         <= '{1'b1, wide_key_shares};
-          otbn_sideload_status <= SideLoadAvail;
-        end
-      end
-      keymgr_dpe_pkg::Hmac: begin
-        if (hmac_sideload_status != SideLoadClear) begin
-          hmac_key_exp         <= '{1'b1, wide_key_shares};
-          hmac_sideload_status <= SideLoadAvail;
-        end
-      end
-      default: `uvm_fatal("keymgr_dpe_if", $sformatf("Unexpect dest type %0s", dest.name))
-    endcase
-
-    // Store the full digest, the invalid key check truncates it to the width of the checked key.
-    keys_a_array[state][dest.name] = key_shares;
-  endfunction
-
-  function automatic void clear_sideload_key(keymgr_dpe_pkg::keymgr_dpe_sideload_clr_e clear_dest);
-    // reset from Clear to NotAvail
-    if (kmac_sideload_status == SideLoadClear) kmac_sideload_status <= SideLoadNotAvail;
-    if (aes_sideload_status == SideLoadClear)  aes_sideload_status  <= SideLoadNotAvail;
-    if (otbn_sideload_status == SideLoadClear) otbn_sideload_status <= SideLoadNotAvail;
-    if (hmac_sideload_status == SideLoadClear) hmac_sideload_status <= SideLoadNotAvail;
-    case (clear_dest)
-      keymgr_dpe_pkg::SideLoadClrIdle: ; // do nothing
-      keymgr_dpe_pkg::SideLoadClrAes,
-      keymgr_dpe_pkg::SideLoadClrKmac,
-      keymgr_dpe_pkg::SideLoadClrOtbn,
-      keymgr_dpe_pkg::SideLoadClrHmac: begin
-        clear_one_sideload_key(clear_dest);
-      end
-      // clear all
-      default: begin
-        clear_one_sideload_key(keymgr_dpe_pkg::SideLoadClrAes);
-        clear_one_sideload_key(keymgr_dpe_pkg::SideLoadClrKmac);
-        clear_one_sideload_key(keymgr_dpe_pkg::SideLoadClrOtbn);
-        clear_one_sideload_key(keymgr_dpe_pkg::SideLoadClrHmac);
-      end
-    endcase
-  endfunction
-
-  function automatic void clear_one_sideload_key(
-      keymgr_dpe_pkg::keymgr_dpe_sideload_clr_e clear_dest
-    );
-
-    case (clear_dest)
-      keymgr_dpe_pkg::SideLoadClrAes: begin
-        aes_sideload_status <= SideLoadClear;
-        aes_key_exp.valid <= 0;
-      end
-      keymgr_dpe_pkg::SideLoadClrKmac: begin
-        is_kmac_key_good <= 0;
-        kmac_key_exp.valid <= 0;
-        kmac_sideload_status <= SideLoadClear;
-      end
-      keymgr_dpe_pkg::SideLoadClrOtbn: begin
-        otbn_sideload_status <= SideLoadClear;
-        otbn_key_exp.valid <= 0;
-      end
-      keymgr_dpe_pkg::SideLoadClrHmac: begin
-        hmac_sideload_status <= SideLoadClear;
-        hmac_key_exp.valid <= 0;
-      end
-      default: begin
-        `uvm_fatal(msg_id, $sformatf("Unexpected clear_dest %0d", clear_dest))
-      end
-    endcase
-  endfunction
-
-  function automatic bit get_keymgr_dpe_en();
-    return keymgr_dpe_en_sync2 === lc_ctrl_pkg::On;
-  endfunction
-
-  function automatic void wipe_sideload_keys();
-    is_kmac_key_good <= 0;
-
-    aes_key_exp.valid  <= 0;
-    kmac_key_exp.valid <= 0;
-    otbn_key_exp.valid <= 0;
-    hmac_key_exp.valid <= 0;
-
-    aes_sideload_status  <= SideLoadClear;
-    kmac_sideload_status <= SideLoadClear;
-    otbn_sideload_status <= SideLoadClear;
-    hmac_sideload_status <= SideLoadClear;
-  endfunction
-
-  function automatic void update_edn_tolerance_upd(int edn_clk, int main_clk);
-    if ((main_clk/edn_clk) * 10 > edn_tolerance_upd) edn_tolerance_upd = (main_clk/edn_clk) * 10;
-  endfunction
-
-  logic valid_done_window;
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      valid_done_window <= 0;
-    end else if (kmac_data_req.req_last) begin
-      valid_done_window <= 1;
-    end else if (kmac_data_rsp.rsp_valid) begin
-      valid_done_window <= 0;
-    end
-  end
-
-  localparam int AdvOpIdx = 0;
-  localparam int GenOpIdx = 1;
-  wire [1:0] op_enables = {tb.dut.u_ctrl.gen_en_o,
-                           tb.dut.u_ctrl.adv_en_o};
-  kmac_pkg::app_rsp_t invalid_kmac_rsp;
-  logic [2:0] force_sideload_valids, pre_sideload_valids;
-  task automatic inject_fault(keymgr_dpe_fault_inject_type_e fi_type);
-    @(posedge clk);
-    `uvm_info(msg_id, $sformatf("injecting fault: %s", fi_type.name), UVM_LOW)
-    case (fi_type)
-      // force more than one force_cmds
-      FaultOpNotOnehot: begin
-        bit [2:0] force_cmds;
-        `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(force_cmds, $countones(force_cmds) > 1;, , msg_id)
-        inject_cmd_err(force_cmds);
-      end
-      // force an ongoing operation to another one
-      FaultOpNotConsistent: begin
-        bit [2:0] force_cmds;
-
-        `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(force_cmds,
-                                           $countones(force_cmds) == 1;
-                                           force_cmds != op_enables;, , msg_id)
-        inject_cmd_err(force_cmds);
-      end
-      FaultOpNotExist: begin
-        bit [2:0] force_cmds;
-
-        // this fault occurs when there is no OP
-        `DV_CHECK_EQ_FATAL(op_enables, 0, , msg_id)
-        `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(force_cmds,
-                                           $countones(force_cmds) == 1;
-                                           // this CM only applies to adv or gen.
-                                           force_cmds != op_enables;, , msg_id)
-        inject_cmd_err(force_cmds);
-      end
-      FaultKmacDoneError: begin
-        // wait until it's not a valid window to issue rsp_valid
-        `DV_SPINWAIT(
-          while (1) begin
-            @(negedge clk);
-            if (!valid_done_window) break;
-          end, , 10_000, // TIMEOUT_NS_
-          msg_id
-        )
-        `DV_CHECK_STD_RANDOMIZE_FATAL(invalid_kmac_rsp, , msg_id)
-        // set rsp_valid to 1, force the other fields to a random value to avoid X propagation
-        invalid_kmac_rsp.rsp_valid = 1;
-        force tb.kmac_if.rsp = invalid_kmac_rsp;
-        @(negedge clk);
-        release tb.kmac_if.rsp;
-      end
-      FaultSideloadNotConsistent: begin
-        pre_sideload_valids = tb.dut.u_sideload_ctrl.valids;
-        `DV_CHECK_STD_RANDOMIZE_WITH_FATAL(force_sideload_valids,
-                                           // force to a different and non-zero value
-                                           force_sideload_valids != pre_sideload_valids;
-                                           force_sideload_valids != 0;, , msg_id)
-        force tb.dut.u_sideload_ctrl.valids = force_sideload_valids;
-        @(posedge clk);
-
-        `DV_WAIT(kmac_data_rsp.rsp_valid, , 500_000, // TIMEOUT_NS_
-                  msg_id)
-        @(posedge clk);
-        release tb.dut.u_sideload_ctrl.valids;
-      end
-      FaultKeyIntgError: begin
-        // TODO(opentitan-integrated/issues/669):
-        // re-evaluate this key logic, as key_state_q does not exist
-        // in keymgr_dpe
-        //
-        // logic [keymgr_pkg::CDIs-1:0][keymgr_pkg::Shares-1:0][keymgr_pkg::KeyWidth-1:0]
-        // force_internal_key, pre_internal_key;
-        // ...
-        //pre_internal_key = tb.dut.u_ctrl.key_state_q;
-        //// flip up to 2 bits
-        //`DV_CHECK_STD_RANDOMIZE_WITH_FATAL(force_internal_key,
-        //  $countones(force_internal_key) inside {1, 2};, , msg_id)
-        //force_internal_key = force_internal_key ^ pre_internal_key;
-
-        //force tb.dut.u_ctrl.key_state_q = force_internal_key;
-        //@(posedge clk);
-
-        //if ($urandom_range(0, 1)) begin
-        //  force tb.dut.u_ctrl.key_state_q = pre_internal_key;
-        //  @(posedge clk);
-        //end
-        //release tb.dut.u_ctrl.key_state_q;
-      end
-      default: `uvm_fatal(msg_id, "impossible value")
-    endcase
-  endtask
-
-  bit [2:0] prev_cmds;
-  task automatic inject_cmd_err(bit[2:0] force_cmds);
-    prev_cmds = op_enables;
-    `uvm_info(msg_id, $sformatf("Force cmd (gen_en/id_en/adv_en) from %3b to %3b",
-                                prev_cmds, force_cmds), UVM_LOW)
-    // these signals are wires, need force and then release at reset
-    if (force_cmds[AdvOpIdx]) force tb.dut.u_ctrl.adv_en_o = 1;
-    if (force_cmds[GenOpIdx]) force tb.dut.u_ctrl.gen_en_o = 1;
-    // if in current cycle, kmac_data_rsp is unknown, assign it with a random value to
-    // avoid X propagation, because forcing *en_o may cause design to read `kmac_app_i`.
-    #1ps;
-    if ($isunknown(kmac_data_rsp)) begin
-      string path = "tb.dut.kmac_app_i";
-      `DV_CHECK_STD_RANDOMIZE_FATAL(invalid_kmac_rsp, , msg_id)
-      // don't change these control signals, otherwise, handshaking may get stuck
-      invalid_kmac_rsp.req_ready = kmac_data_rsp.req_ready;
-      invalid_kmac_rsp.rsp_valid = kmac_data_rsp.rsp_valid;
-      // use deposit rather than force, so that the valid can be preserved until next update
-      `DV_CHECK_FATAL(uvm_hdl_deposit(path, invalid_kmac_rsp), , msg_id)
-    end
-    @(posedge clk);
-
-    if ($urandom_range(0, 1)) begin
-      if (force_cmds[AdvOpIdx]) force tb.dut.u_ctrl.adv_en_o = prev_cmds[0];
-      if (force_cmds[GenOpIdx]) force tb.dut.u_ctrl.gen_en_o = prev_cmds[1];
-      @(posedge clk);
-    end
-
-    if (force_cmds[AdvOpIdx]) release tb.dut.u_ctrl.adv_en_o;
-    if (force_cmds[GenOpIdx]) release tb.dut.u_ctrl.gen_en_o;
-  endtask
-
-  // Hold the decoy data that the KMAC interface drives outside a KMAC transaction at all zeros or
-  // all ones. The LFSR can produce these values, just rarely.
-  task automatic force_const_decoy(bit all_ones);
-    `uvm_info(msg_id, $sformatf("Force decoy data to all %0d", all_ones), UVM_LOW)
-    if (all_ones) force tb.dut.u_kmac_if.entropy_i = '1;
-    else          force tb.dut.u_kmac_if.entropy_i = '0;
-  endtask
-
-  task automatic release_const_decoy();
-    release tb.dut.u_kmac_if.entropy_i;
-  endtask
-
-  bit trigger_force_hw_key_sel;
-  for (genvar i = 0; i < SW_OUTPUT_WORD_NUM; i++) begin : gen_force_hw_key_sel
-    always @(trigger_force_hw_key_sel) begin
-      if (trigger_force_hw_key_sel) begin
-        // force to false, in order to try to move HW key to SW output
-        force tb.dut.gen_sw_assigns[i].hw_key_sel_buf[0] = prim_mubi_pkg::MuBi4False;
-        force tb.dut.gen_sw_assigns[i].hw_key_sel_buf[1] = prim_mubi_pkg::MuBi4False;
-      end else begin
-        release tb.dut.gen_sw_assigns[i].hw_key_sel_buf;
-      end
-    end
-  end
-  task automatic inject_sideload_fault(bit force_hw_key_sel_or_data_en);
-    if (force_hw_key_sel_or_data_en) begin
-      `uvm_info(msg_id, "force tb.dut.gen_sw_assigns[*].hw_key_sel_buf[*] to MuBi4False", UVM_LOW)
-      trigger_force_hw_key_sel = 1;
-    end else begin
-      `uvm_info(msg_id, "force tb.dut.u_ctrl.u_data_en.data_sw_en_o to 1", UVM_LOW)
-      force tb.dut.u_ctrl.u_data_en.data_sw_en_o = 1;
-    end
-    // force until the transaction is done.
-    @(negedge kmac_data_rsp.rsp_valid);
-    if (force_hw_key_sel_or_data_en) begin
-      trigger_force_hw_key_sel = 0;
-    end else begin
-      release tb.dut.u_ctrl.u_data_en.data_sw_en_o;
-    end
-  endtask
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      keymgr_dpe_en_sync1 <= lc_ctrl_pkg::Off;
-      keymgr_dpe_en_sync2 <= lc_ctrl_pkg::Off;
-    end else begin
-      keymgr_dpe_en_sync1 <= keymgr_dpe_en;
-      // avoid race condtion in the driver
-      keymgr_dpe_en_sync2 <= #1ps keymgr_dpe_en_sync1;
-    end
-  end
-
-  // if kmac sideload key is available, switch to it after an operation is completed
-  // if not available, de-assert valid after rsp_valid is asserted
-  initial begin
-    forever begin
-      @(posedge clk);
-      if (kmac_data_rsp.rsp_valid) begin
-        if (kmac_sideload_status == SideLoadAvail) begin
-          kmac_key_exp <= '{1'b1, kmac_sideload_key_shares};
-          is_kmac_key_good <= 1;
-        end else begin
-          kmac_key_exp.valid <= 0;
-          is_kmac_key_good   <= 0;
-        end
-      end // kmac_data_rsp.rsp_valid
-    end // forever
-  end
-
-  // check if key is invalid, it should not match to any of the meaningful keys
-  initial begin
-    fork
-      forever begin
-        @(kmac_key or is_kmac_key_good);
-        // one cycle to sync with clock, one cycle to allow design to clear the key
-        repeat (2) @(posedge clk);
-        if (!is_kmac_key_good) begin
-          check_invalid_key(kmac_key.valid, hw_shares_to_digests(kmac_key.key),
-                            keymgr_dpe_pkg::HwKeyWidth, "KMAC");
-        end
-      end
-      forever begin
-        @(aes_key or aes_sideload_status);
-        // one cycle to sync with clock, one cycle to allow design to clear the key
-        repeat (2) @(posedge clk);
-        if (aes_sideload_status != SideLoadAvail) begin
-          check_invalid_key(aes_key.valid, hw_shares_to_digests(aes_key.key),
-                            keymgr_dpe_pkg::HwKeyWidth, "AES");
-        end
-      end
-      forever begin
-        @(otbn_key or otbn_sideload_status);
-        // one cycle to sync with clock, one cycle to allow design to clear the key
-        repeat (2) @(posedge clk);
-        if (otbn_sideload_status != SideLoadAvail) begin
-          check_invalid_key(otbn_key.valid, otbn_key.key, keymgr_dpe_pkg::WideHwKeyWidth, "OTBN");
-        end
-      end
-      forever begin
-        @(hmac_key or hmac_sideload_status);
-        // one cycle to sync with clock, one cycle to allow design to clear the key
-        repeat (2) @(posedge clk);
-        if (hmac_sideload_status != SideLoadAvail) begin
-          check_invalid_key(hmac_key.valid, hmac_key.key, keymgr_dpe_pkg::WideHwKeyWidth, "HMAC");
-        end
-      end
-    join
-  end
-
-  // Zero extend the shares of a `HwKeyWidth` wide key to the digest width.
-  function automatic keymgr_dpe_env_pkg::kmac_digests_t hw_shares_to_digests(
-      keymgr_dpe_env_pkg::hw_key_shares_t key_shares
-  );
-    return {kmac_pkg::AppDigestW'(key_shares[1]), kmac_pkg::AppDigestW'(key_shares[0])};
-  endfunction
-
-  // Check that an invalid key does not match any of the meaningful keys. `act_shares` holds the
-  // shares of the checked key zero extended to the digest width. Only the lower `width` bits of
-  // the stored keys are compared.
-  function automatic void check_invalid_key(
-      logic valid,
-      keymgr_dpe_env_pkg::kmac_digests_t act_shares,
-      int unsigned width,
-      string key_name
-  );
-    if (rst_n && valid && en_chk) begin
-      keymgr_dpe_env_pkg::kmac_digests_t mask =
-          {2{kmac_pkg::AppDigestW'((kmac_pkg::AppDigestW'(1) << width) - 1)}};
-      foreach (keys_a_array[state, dest]) begin
-        keymgr_dpe_env_pkg::kmac_digests_t exp_shares = keys_a_array[state][dest];
-
-        `DV_CHECK_CASE_NE(act_shares & mask, exp_shares & mask,
-            $sformatf("%s key at state %s for %s", key_name, state.name, dest), ,
-            msg_id)
-        // once key is wiped, 2 shares will be wiped to different values
-        `DV_CHECK_CASE_NE(act_shares[1], act_shares[0],
-            $sformatf("%s key at state %s for %s", key_name, state.name, dest), ,
-            msg_id)
-      end
-    end
-  endfunction
-
-  // Create a macro to skip checking key values when LC is off or fault error occurs
-  `define ASSERT_IFF_KEYMGR_DPE_LEGAL(NAME, SEQ) \
-    `ASSERT(NAME, SEQ, clk, !rst_n || keymgr_dpe_en_sync2 != lc_ctrl_pkg::On || !en_chk)
-
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckKmacKey,
-    is_kmac_key_good && kmac_key_exp.valid ->
-    (kmac_key.key[0] ^ kmac_key.key[1]) ==
-    (kmac_key_exp.key[0] ^ kmac_key_exp.key[1])
-  )
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckKmacKeyValid,
-    is_kmac_key_good -> kmac_key_exp.valid == kmac_key.valid
-  )
-
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckAesKey,
-    aes_sideload_status == SideLoadAvail &&
-    aes_key_exp.valid -> aes_key == aes_key_exp
-  )
-
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckAesKeyValid,
-    aes_sideload_status != SideLoadClear ->
-    aes_key_exp.valid == aes_key.valid
-  )
-
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckOtbnKey, otbn_sideload_status == SideLoadAvail &&
-    otbn_key_exp.valid -> otbn_key == otbn_key_exp
-  )
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckOtbnKeyValid,
-    otbn_sideload_status != SideLoadClear ->
-    otbn_key_exp.valid == otbn_key.valid
-  )
-
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckHmacKey, hmac_sideload_status == SideLoadAvail &&
-    hmac_key_exp.valid -> hmac_key == hmac_key_exp
-  )
-  `ASSERT_IFF_KEYMGR_DPE_LEGAL(
-    CheckHmacKeyValid,
-    hmac_sideload_status != SideLoadClear ->
-    hmac_key_exp.valid == hmac_key.valid
-  )
-
-  // for EDN assertion
-  // sync req/ack to core clk domain
-  always @(posedge edn_clk or negedge edn_rst_n) begin
-    if (!edn_rst_n) begin
-      edn_req_sync <= 0;
-      edn_req_ack_sync <= 0;
-    end else if (edn_req_ack_sync_done) begin
-      edn_req_sync <= 0;
-      edn_req_ack_sync <= 0;
-    end else if (edn_req && !edn_req_sync) begin
-      edn_req_sync <= 1;
-    end else if (edn_req & edn_ack) begin
-      edn_req_ack_sync <= 1;
-    end
-  end
-
-  // use start_edn_req to skip checking 1st EDN req as it's triggered by advance cmd
-  always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      edn_req_ack_sync_done <= 0;
-      start_edn_req <= 0;
-    end else if (edn_req_ack_sync && !edn_req_ack_sync_done) begin
-      edn_req_ack_sync_done <= 1;
-      start_edn_req <= 1;
-    end else if (!edn_req_ack_sync) begin
-      edn_req_ack_sync_done <= 0;
-    end
-  end
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      edn_req_ack_sync_done_qq <= 1'b0;
-    end else begin
-      edn_req_ack_sync_done_qq <= edn_req_ack_sync_done;
-    end
-  end
-
-  // Increment the counter for PRNG updates happening unless we're waiting for EDN.
-  assign edn_wait_cnt_incr = lfsr_en && (!edn_req_sync || (edn_req_sync && edn_req_ack_sync));
-
-  // Clear the counter upon rising edges of the synchronized req_ack_done signal.
-  assign edn_wait_cnt_clr = edn_req_ack_sync_done & !edn_req_ack_sync_done_qq;
-
-  always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      edn_wait_cnt <= 0;
-    end else if (edn_wait_cnt_clr) begin
-      edn_wait_cnt <= 0;
-    end else if (edn_wait_cnt_incr) begin
-      edn_wait_cnt <= edn_wait_cnt + 1;
-    end
-  end
-
-  initial begin
-    forever begin
-      wait(rst_n === 1);
-      edn_req_cnt <= 0;
-      `DV_SPINWAIT_EXIT(forever begin
-                          @(negedge edn_req_ack_sync_done);
-                          edn_req_cnt <= edn_req_cnt + 1;
-                        end,
-                        wait(!rst_n), , msg_id)
-    end
-  end
-
-  // consider async handshaking and a few PRNG update requests to start the req. allow no more than
-  // `edn_tolerance_upd` tolerance error on the cnt.
-  // `edn_tolerance_upd` default value is 20, but if the frequency difference between edn and main
-  // clock is too big, the testbench will scale it up to a larger value.
-  `ASSERT(CheckEdn1stReq, $rose(edn_req_sync) && edn_req_cnt == 0 && start_edn_req |->
-          (edn_wait_cnt >= edn_interval) && (edn_wait_cnt - edn_interval < edn_tolerance_upd),
-          clk, !rst_n || !en_chk)
-
-  `ASSERT(CheckEdn2ndReq, $rose(edn_req_sync) && edn_req_cnt == 1 |->
-          edn_wait_cnt < edn_tolerance_upd,
-          clk, !rst_n || !en_chk)
-
-  `undef ASSERT_IFF_KEYMGR_DPE_LEGAL
 endinterface

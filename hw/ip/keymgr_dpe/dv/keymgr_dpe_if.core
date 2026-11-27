@@ -1,0 +1,24 @@
+CAPI=2:
+# Copyright lowRISC contributors (OpenTitan project).
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+
+name: "lowrisc:dv:keymgr_dpe_if:0.1"
+description: "SV interface use to connect DUT with UVM component"
+filesets:
+  files_dv:
+    depend:
+      - lowrisc:ip:keymgr_dpe_pkg
+      - lowrisc:ip:lc_ctrl_pkg
+    files:
+      - tb/keymgr_dpe_if.sv
+    file_type: systemVerilogSource
+
+targets:
+  default: &default_target
+    filesets:
+      - files_dv
+    default_tool: vcs
+
+  lint:
+    <<: *default_target
